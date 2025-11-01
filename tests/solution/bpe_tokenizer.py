@@ -1,24 +1,43 @@
 import os
 import regex as re 
 from typing import BinaryIO
+from multiprocessing import Pool
 from .base import Tokenizer
 
 class BPETokenizer(Tokenizer):
     def __init__(self, vocab: dict[int, bytes], merges: list[tuple[bytes, bytes]]):
         super().__init__(vocab, merges)
 
-    def pretokenize(self, input_path: str | os.PathLike) -> list[str]:
-        pretokenized_train_data = []
+    @staticmethod
+    def _process_chunk(args) -> list[str]:
+        start, end, input_path = args
+        PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
+        chunk_tokens = []
         with open(input_path, "rb") as f:
-            num_processes = 4
-            PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
+            f.seek(start)
+            chunk = f.read(end - start).decode("utf-8", errors="ignore")
+            chunk = "|".join(chunk.split("<|endoftext|>"))
+            for pretoken in re.finditer(PAT, chunk):
+                chunk_tokens.append(pretoken.group(0))
+        return chunk_tokens
+
+    def pretokenize(self, input_path: str | os.PathLike) -> list[str]:
+        num_processes = os.cpu_count() or 4  # Use CPU count or fallback to 4
+        with open(input_path, "rb") as f:
             boundaries = self._find_chunk_boundaries(f, num_processes, b"<|endoftext|>")
-            for start, end in zip(boundaries[:-1], boundaries[1:]):
-                f.seek(start)
-                chunk = f.read(end - start).decode("utf-8", errors="ignore")
-                chunk = "|".join(chunk.split("<|endoftext|>"))                
-                for pretoken in re.finditer(PAT, chunk):
-                    pretokenized_train_data.append(pretoken.group(0))    
+        
+        # Create list of (start, end, input_path) tuples for each chunk
+        chunk_args = [(start, end, input_path) for start, end in zip(boundaries[:-1], boundaries[1:])]
+        
+        # Process chunks in parallel
+        with Pool(processes=num_processes) as pool:
+            chunk_results = pool.map(self._process_chunk, chunk_args)
+        
+        # Flatten results from all processes
+        pretokenized_train_data = []
+        for chunk_tokens in chunk_results:
+            pretokenized_train_data.extend(chunk_tokens)
+            
         return pretokenized_train_data
 
     def train(self, train_data: list[str]):
