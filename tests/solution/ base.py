@@ -1,13 +1,14 @@
-
-def helper():
-    pass
+import os
 
 class Tokenizer():
     def __init__(self, vocab: dict[int, bytes], merges: list[tuple[bytes, bytes]]):
         self.vocab = vocab
         self.merges = merges
 
-    def train(self, train_data: str):
+    def pretokenize(self, input_path: str | os.PathLike) -> list[str]:
+        raise NotImplementedError
+
+    def train(self, train_data: list[str]):
         raise NotImplementedError
 
     def encode(self, input_text: str) -> list[int]:
