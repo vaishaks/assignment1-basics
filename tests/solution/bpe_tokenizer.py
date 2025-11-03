@@ -7,7 +7,7 @@ from typing import BinaryIO
 from .base import Tokenizer, count_pairs, merge
 
 PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
-VOCAB_SIZE = 512
+VOCAB_SIZE = 1000
 
 class BPETokenizer(Tokenizer):
     def __init__(self, vocab: dict[int, bytes], merges: list[tuple[bytes, bytes]]):
@@ -46,13 +46,13 @@ class BPETokenizer(Tokenizer):
         return pretokenized_train_data
 
     def train(
-            self, 
+            self,
             train_data: list[str]
-            ) -> tuple[dict[int, bytes], list[tuple[int, int]]]:
+            ) -> tuple[dict[int, bytes], list[tuple[bytes, bytes]]]:
         vocab: dict[int, bytes] = {i: bytes([i]) for i in range(256)}
-        merges: list[tuple[int, int]] = []
-        # Preprocess the training data into a list of token bytes
-        train_bytes: list[list[bytes]] = []
+        merges: list[tuple[bytes, bytes]] = []
+        # Preprocess the training data into a list of token ids (ints)
+        train_bytes: list[list[int]] = []
         for pretoken in train_data:
             train_bytes.append(list(pretoken.encode("utf-8")))
         # Perform BPE merges
@@ -68,18 +68,46 @@ class BPETokenizer(Tokenizer):
             # Update vocab
             vocab[tokenid] = vocab[max_pair[0]] + vocab[max_pair[1]]
             print(f"New token id {tokenid} for bytes {vocab[tokenid]}")
-            # Update merges
-            merges.append((vocab[max_pair[0]], vocab[max_pair[1]]))            
+            # Update merges (store as tuple[bytes, bytes])
+            merges.append((vocab[max_pair[0]], vocab[max_pair[1]]))
             # Merge all occurrences of the most frequent pair
             train_bytes = merge(train_bytes, max_pair, tokenid)
 
+        self.vocab = vocab
+        self.merges = merges
         return vocab, merges
     
     def encode(self, input_text: str) -> list[int]:
-        raise NotImplementedError
-    
+        # Pretokenize input into strings according to PAT
+        pretok_text = re.findall(PAT, input_text)
+        # Convert each pretoken string into a list of UTF-8 byte values (ints)
+        input_text_bytes = [list(pretoken.encode("utf-8")) for pretoken in pretok_text]
+        # Build a reverse mapping from byte sequence (bytes) to token id (int)
+        byte_to_id = {b: tid for tid, b in self.vocab.items()}
+        merged = []
+        # Process each pretoken's byte-token sequence independently
+        for tokens in input_text_bytes:
+            # tokens is a list[int] representing initial single-byte token ids (0-255)
+            for idx, merge_pair in enumerate(self.merges):
+                # Each merge_pair is stored as (bytes_left, bytes_right).
+                left_bytes, right_bytes = merge_pair
+                # Use the reverse map to find the token ids.
+                left_id = byte_to_id.get(left_bytes)
+                right_id = byte_to_id.get(right_bytes)
+                new_token_id = 256 + idx
+                # Apply merge on the single pretoken (wrap in list to match merge() API)
+                new_tokens = merge([tokens], (left_id, right_id), new_token_id)[0]
+                if new_tokens == tokens:
+                    break  # No more merges can be applied
+                tokens = new_tokens
+            merged.extend(tokens)
+        return merged
+
     def decode(self, token_ids: list[int]) -> str:
-        raise NotImplementedError
+        byte_array: list[bytes] = []
+        for token in token_ids:
+            byte_array.append(self.vocab[token])
+        return b"".join(byte_array).decode("utf-8")
     
     def _find_chunk_boundaries(
         self,

@@ -17,5 +17,6 @@ def test_train():
     input_path = FIXTURES_PATH / "tinystories_sample.txt"
     pretokenized_data = tokenizer.pretokenize(input_path)
     vocab, merges = tokenizer.train(pretokenized_data)
-    print(vocab)
-    print(merges)
+    # print(vocab)
+    # print(merges)
+    print(tokenizer.decode(tokenizer.encode("Hello world!")))
