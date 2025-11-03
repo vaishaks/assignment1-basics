@@ -1,8 +1,13 @@
 import os
 import regex as re 
-from typing import BinaryIO
+
 from multiprocessing import Pool
-from .base import Tokenizer
+from typing import BinaryIO
+
+from .base import Tokenizer, count_pairs, merge
+
+PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
+VOCAB_SIZE = 512
 
 class BPETokenizer(Tokenizer):
     def __init__(self, vocab: dict[int, bytes], merges: list[tuple[bytes, bytes]]):
@@ -10,8 +15,7 @@ class BPETokenizer(Tokenizer):
 
     @staticmethod
     def _process_chunk(args) -> list[str]:
-        start, end, input_path = args
-        PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
+        start, end, input_path = args        
         chunk_tokens = []
         with open(input_path, "rb") as f:
             f.seek(start)
@@ -27,7 +31,8 @@ class BPETokenizer(Tokenizer):
             boundaries = self._find_chunk_boundaries(f, num_processes, b"<|endoftext|>")
         
         # Create list of (start, end, input_path) tuples for each chunk
-        chunk_args = [(start, end, input_path) for start, end in zip(boundaries[:-1], boundaries[1:])]
+        chunk_args = [(start, end, input_path) \
+                      for start, end in zip(boundaries[:-1], boundaries[1:])]
         
         # Process chunks in parallel
         with Pool(processes=num_processes) as pool:
@@ -40,8 +45,35 @@ class BPETokenizer(Tokenizer):
             
         return pretokenized_train_data
 
-    def train(self, train_data: list[str]):
-        raise NotImplementedError
+    def train(
+            self, 
+            train_data: list[str]
+            ) -> tuple[dict[int, bytes], list[tuple[int, int]]]:
+        vocab: dict[int, bytes] = {i: bytes([i]) for i in range(256)}
+        merges: list[tuple[int, int]] = []
+        # Preprocess the training data into a list of token bytes
+        train_bytes: list[list[bytes]] = []
+        for pretoken in train_data:
+            train_bytes.append(list(pretoken.encode("utf-8")))
+        # Perform BPE merges
+        for idx in range(VOCAB_SIZE - 255):
+            # Calculate the frequency of all adjacent pairs in the training data
+            pair_counts: dict[tuple[int, int], int] = count_pairs(train_bytes)
+            if not pair_counts:
+                break  # No more pairs to merge
+            max_pair: tuple[int, int] = max(pair_counts, key=pair_counts.get)
+            print(f"Most frequent pair: {max_pair} with count {pair_counts[max_pair]}")
+            # Mint a new token
+            tokenid = 256 + idx
+            # Update vocab
+            vocab[tokenid] = vocab[max_pair[0]] + vocab[max_pair[1]]
+            print(f"New token id {tokenid} for bytes {vocab[tokenid]}")
+            # Update merges
+            merges.append((vocab[max_pair[0]], vocab[max_pair[1]]))            
+            # Merge all occurrences of the most frequent pair
+            train_bytes = merge(train_bytes, max_pair, tokenid)
+
+        return vocab, merges
     
     def encode(self, input_text: str) -> list[int]:
         raise NotImplementedError
