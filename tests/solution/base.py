@@ -10,7 +10,12 @@ class Tokenizer():
     def pretokenize(self, input_path: str | os.PathLike) -> list[str]:
         raise NotImplementedError
 
-    def train(self, train_data: list[str]) -> tuple[dict[int, bytes], list[tuple[bytes, bytes]]]:
+    def train(
+            self, 
+            train_data: list[str], 
+            vocab_size: int, 
+            special_tokens: list[str]
+            ) -> tuple[dict[int, bytes], list[tuple[bytes, bytes]]]:
         raise NotImplementedError
 
     def encode(self, input_text: str) -> list[int]:

@@ -7,7 +7,6 @@ from typing import BinaryIO
 from .base import Tokenizer, count_pairs, merge
 
 PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
-VOCAB_SIZE = 1000
 
 class BPETokenizer(Tokenizer):
     def __init__(self, vocab: dict[int, bytes], merges: list[tuple[bytes, bytes]]):
@@ -47,7 +46,9 @@ class BPETokenizer(Tokenizer):
 
     def train(
             self,
-            train_data: list[str]
+            train_data: list[str],
+            vocab_size: int,
+            special_tokens: list[str]
             ) -> tuple[dict[int, bytes], list[tuple[bytes, bytes]]]:
         vocab: dict[int, bytes] = {i: bytes([i]) for i in range(256)}
         merges: list[tuple[bytes, bytes]] = []
@@ -56,22 +57,24 @@ class BPETokenizer(Tokenizer):
         for pretoken in train_data:
             train_bytes.append(list(pretoken.encode("utf-8")))
         # Perform BPE merges
-        for idx in range(VOCAB_SIZE - 255):
+        for idx in range(vocab_size - 255):
             # Calculate the frequency of all adjacent pairs in the training data
             pair_counts: dict[tuple[int, int], int] = count_pairs(train_bytes)
             if not pair_counts:
                 break  # No more pairs to merge
             max_pair: tuple[int, int] = max(pair_counts, key=pair_counts.get)
-            print(f"Most frequent pair: {max_pair} with count {pair_counts[max_pair]}")
             # Mint a new token
             tokenid = 256 + idx
             # Update vocab
             vocab[tokenid] = vocab[max_pair[0]] + vocab[max_pair[1]]
-            print(f"New token id {tokenid} for bytes {vocab[tokenid]}")
             # Update merges (store as tuple[bytes, bytes])
             merges.append((vocab[max_pair[0]], vocab[max_pair[1]]))
             # Merge all occurrences of the most frequent pair
             train_bytes = merge(train_bytes, max_pair, tokenid)
+
+        for idx, special_token in enumerate(special_tokens):
+            tokenid = vocab_size + idx
+            vocab[tokenid] = special_token.encode("utf-8")
 
         self.vocab = vocab
         self.merges = merges

@@ -16,7 +16,7 @@ def test_train():
     tokenizer = bpe_tokenizer.BPETokenizer(vocab={}, merges=[])
     input_path = FIXTURES_PATH / "tinystories_sample.txt"
     pretokenized_data = tokenizer.pretokenize(input_path)
-    vocab, merges = tokenizer.train(pretokenized_data)
+    vocab, merges = tokenizer.train(pretokenized_data, 512, ["<|endoftext|>"])
     # print(vocab)
     # print(merges)
-    print(tokenizer.decode(tokenizer.encode("Hello world!")))
+    print(tokenizer.decode(tokenizer.encode("Hello world!<|endoftext|>")))
