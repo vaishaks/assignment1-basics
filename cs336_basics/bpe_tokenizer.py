@@ -50,31 +50,36 @@ class BPETokenizer(Tokenizer):
             vocab_size: int,
             special_tokens: list[str]
             ) -> tuple[dict[int, bytes], list[tuple[bytes, bytes]]]:
+        # Initialize base vocab (single-byte tokens)
         vocab: dict[int, bytes] = {i: bytes([i]) for i in range(256)}
         merges: list[tuple[bytes, bytes]] = []
+        for tok in special_tokens:
+            vocab[len(vocab)] = tok.encode("utf-8")
+
         # Preprocess the training data into a list of token ids (ints)
         train_bytes: list[list[int]] = []
         for pretoken in train_data:
             train_bytes.append(list(pretoken.encode("utf-8")))
-        # Perform BPE merges
-        for idx in range(vocab_size - 255):
+
+        # Determine how many merges to perform given the desired final vocab size
+        num_merges = max(0, vocab_size - len(vocab))
+
+        # Perform BPE merges. Mint new ids from len(vocab) so ids are consistent
+        # with the current vocabulary size (and match how bpe.py behaves).
+        for _ in range(num_merges):
             # Calculate the frequency of all adjacent pairs in the training data
             pair_counts: dict[tuple[int, int], int] = count_pairs(train_bytes)
             if not pair_counts:
                 break  # No more pairs to merge
             max_pair: tuple[int, int] = max(pair_counts, key=pair_counts.get)
-            # Mint a new token
-            tokenid = 256 + idx
-            # Update vocab
+            # Mint a new token id at the end of the current vocab
+            tokenid = len(vocab)
+            # Update vocab with the concatenation of the two merged bytes
             vocab[tokenid] = vocab[max_pair[0]] + vocab[max_pair[1]]
             # Update merges (store as tuple[bytes, bytes])
             merges.append((vocab[max_pair[0]], vocab[max_pair[1]]))
             # Merge all occurrences of the most frequent pair
             train_bytes = merge(train_bytes, max_pair, tokenid)
-
-        for idx, special_token in enumerate(special_tokens):
-            tokenid = vocab_size + idx
-            vocab[tokenid] = special_token.encode("utf-8")
 
         self.vocab = vocab
         self.merges = merges

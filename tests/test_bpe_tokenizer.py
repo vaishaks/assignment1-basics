@@ -1,6 +1,6 @@
 import pathlib
 
-from .solution import bpe_tokenizer
+from cs336_basics.bpe_tokenizer import BPETokenizer
 
 FIXTURES_PATH = (pathlib.Path(__file__).resolve().parent) / "fixtures"
 
@@ -13,7 +13,7 @@ FIXTURES_PATH = (pathlib.Path(__file__).resolve().parent) / "fixtures"
 #     assert pretokenized_data[:10] == ['\n', 'Once', ' upon', ' a', ' time', ' there', ' was', ' a', ' little', ' boy']
 
 def test_train():
-    tokenizer = bpe_tokenizer.BPETokenizer(vocab={}, merges=[])
+    tokenizer = BPETokenizer(vocab={}, merges=[])
     input_path = FIXTURES_PATH / "tinystories_sample.txt"
     pretokenized_data = tokenizer.pretokenize(input_path)
     vocab, merges = tokenizer.train(pretokenized_data, 512, ["<|endoftext|>"])
