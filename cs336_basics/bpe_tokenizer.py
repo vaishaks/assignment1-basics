@@ -1,5 +1,4 @@
 import os
-import heapq
 import regex as re 
 
 from multiprocessing import Pool
@@ -54,9 +53,15 @@ class BPETokenizer(Tokenizer):
         with open(input_path, "rb") as f:
             f.seek(start)
             chunk = f.read(end - start).decode("utf-8", errors="ignore")
-            chunk = "|".join(chunk.split(EOT_TOKEN))
-            for pretoken in re.finditer(PAT, chunk):
-                chunk_tokens.append(pretoken.group(0))
+            # Split on EOT_TOKEN but preserve it as separate pretokens
+            parts = chunk.split(EOT_TOKEN)
+            for i, part in enumerate(parts):
+                # Apply regex pretokenization to the text part
+                for pretoken in re.finditer(PAT, part):
+                    chunk_tokens.append(pretoken.group(0))
+                # Insert EOT_TOKEN as a pretoken between parts (but not after the last part)
+                if i < len(parts) - 1:
+                    chunk_tokens.append(EOT_TOKEN)
         return chunk_tokens
 
     def pretokenize(self, input_path: str | os.PathLike) -> list[str]:
@@ -85,11 +90,23 @@ class BPETokenizer(Tokenizer):
             vocab[len(vocab)] = token.encode("utf-8")
         return vocab
 
-    def _build_sequences(self, train_data: list[str]) -> list[ListNode]:
+    def _build_sequences(self, train_data: list[str], vocab: dict[int, bytes]) -> list[ListNode]:
+        # Build a mapping from special token bytes to their vocab IDs
+        special_token_to_id = {}
+        for token_id, token_bytes in vocab.items():
+            if token_id >= 256:  # Special tokens are added after byte tokens
+                special_token_to_id[token_bytes] = token_id
+        
         # Preprocess the training data into a list of token ids (ints)
         corpus: list[list[int]] = []
         for pretoken in train_data:
-            corpus.append(list(pretoken.encode("utf-8")))
+            pretoken_bytes = pretoken.encode("utf-8")
+            # If this pretoken is a special token, use its vocab ID directly (atomic unit)
+            if pretoken_bytes in special_token_to_id:
+                corpus.append([special_token_to_id[pretoken_bytes]])
+            else:
+                # Regular pretoken: break into bytes
+                corpus.append(list(pretoken_bytes))
 
         # Create linked list sequences for each pretoken
         sequences: list[ListNode] = []
@@ -158,7 +175,10 @@ class BPETokenizer(Tokenizer):
         # Initialize base vocab (single-byte tokens)
         vocab: dict[int, bytes] = self._init_vocab(special_tokens)
         merges: list[tuple[bytes, bytes]] = []
-        sequences: list[ListNode] = self._build_sequences(train_data)
+        sequences: list[ListNode] = self._build_sequences(train_data, vocab)
+        
+        # Get set of special token IDs to skip during merging
+        special_token_ids = {tid for tid, token_bytes in vocab.items() if tid >= 256}
 
         # Pre-compute the positions of all adjacent pairs in the sequences
         pair_positions: dict[tuple[int, int], set[ListNode]] = self._index_pairs(sequences)
@@ -167,8 +187,11 @@ class BPETokenizer(Tokenizer):
         num_merges = max(0, vocab_size - len(vocab))
         # Perform BPE merges.
         for idx in range(num_merges):
-            # Build frequency map
-            pair_frequencies: dict[tuple[int, int], int] = {pair: len(pos) for pair, pos in pair_positions.items() if len(pos) >= 2}
+            # Build frequency map, excluding pairs that involve special tokens
+            pair_frequencies: dict[tuple[int, int], int] = {
+                pair: len(pos) for pair, pos in pair_positions.items() 
+                if len(pos) >= 2 and pair[0] not in special_token_ids and pair[1] not in special_token_ids
+            }
             if not pair_frequencies:
                 break
             # Lexicographical ordering of the most frequent pair
