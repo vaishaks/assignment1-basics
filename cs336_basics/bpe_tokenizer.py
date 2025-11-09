@@ -79,6 +79,87 @@ class BPETokenizer(Tokenizer):
             
         return pretokenized_train_data
 
+    def _init_vocab(self, special_tokens: list[str]) -> dict[int, bytes]:
+        vocab: dict[int, bytes] = {i: bytes([i]) for i in range(256)}
+        for token in special_tokens:
+            vocab[len(vocab)] = token.encode("utf-8")
+        return vocab
+
+    def _build_sequences(self, train_data: list[str]) -> list[ListNode]:
+        # Preprocess the training data into a list of token ids (ints)
+        corpus: list[list[int]] = []
+        for pretoken in train_data:
+            corpus.append(list(pretoken.encode("utf-8")))
+
+        # Create linked list sequences for each pretoken
+        sequences: list[ListNode] = []
+        for seq in corpus:
+            sequence = ListNode.from_list(seq)
+            sequences.append(sequence)
+
+        return sequences        
+    
+    def _index_pairs(self, sequences: list[ListNode]) -> dict[tuple[int, int], set[ListNode]]:
+        pair_positions: dict[tuple[int, int], set[ListNode]] = {}
+        for seq in sequences:
+                token = seq
+                while token and token.next:
+                    pair = (token.val, token.next.val)
+                    if pair not in pair_positions:
+                        pair_positions[pair] = set()
+                    pair_positions[pair].add(token)
+                    token = token.next  
+        return pair_positions      
+    
+    def _make_pair_freq_heap(
+        self,
+        pair_positions: dict[tuple[int, int], set[ListNode]],
+        vocab: dict[int, bytes]
+        ) -> list[tuple[int, tuple, tuple[int, int]]]:
+        pair_frequencies: list[tuple[int, tuple, tuple[int, int]]] = []
+        for pair, positions in pair_positions.items():
+            pair_frequencies.append((-len(positions), tuple(-b for b in vocab[pair[0]] + vocab[pair[1]]), pair))
+        heapq.heapify(pair_frequencies)
+        return pair_frequencies
+    
+    def _apply_merge(
+        self,
+        pair: tuple[int, int],
+        tokenid: int,
+        pair_positions: dict[tuple[int, int], set[ListNode]]
+        ) -> None:
+            ocurrences = list(pair_positions[pair])
+            for pos in ocurrences:
+                # We will merge pos and pos.next into a single node with value tokenid
+                # All it's neighbors are going to be affected by this merge and we need to 
+                # update pair_positions by first removing old references.
+                for neighbor in (pos.prev, pos.next):
+                    if neighbor and neighbor.next:
+                        old_pair = (neighbor.val, neighbor.next.val)
+                        if old_pair in pair_positions:
+                            pair_positions[old_pair].discard(neighbor)
+                # Merge nodes
+                old_node = pos.next
+                pos.val = tokenid
+                pos.next = old_node.next
+                if old_node.next:
+                    old_node.next.prev = pos
+
+                # Add new pairs formed by the merge
+                if pos.prev:
+                    new_pair = (pos.prev.val, pos.val)
+                    if new_pair not in pair_positions:
+                        pair_positions[new_pair] = set()
+                    pair_positions[new_pair].add(pos.prev)
+                if pos.next:
+                    new_pair = (pos.val, pos.next.val)
+                    if new_pair not in pair_positions:
+                        pair_positions[new_pair] = set()
+                    pair_positions[new_pair].add(pos)
+            # Remove merged pair from pair_positions
+            if pair in pair_positions:
+                del pair_positions[pair]
+
     def train(
             self,
             train_data: list[str],
@@ -208,83 +289,3 @@ class BPETokenizer(Tokenizer):
         # Make sure all boundaries are unique, but might be fewer than desired_num_chunks
         return sorted(set(chunk_boundaries))
     
-    def _init_vocab(self, special_tokens: list[str]) -> dict[int, bytes]:
-        vocab: dict[int, bytes] = {i: bytes([i]) for i in range(256)}
-        for token in special_tokens:
-            vocab[len(vocab)] = token.encode("utf-8")
-        return vocab
-
-    def _build_sequences(self, train_data: list[str]) -> list[ListNode]:
-        # Preprocess the training data into a list of token ids (ints)
-        corpus: list[list[int]] = []
-        for pretoken in train_data:
-            corpus.append(list(pretoken.encode("utf-8")))
-
-        # Create linked list sequences for each pretoken
-        sequences: list[ListNode] = []
-        for seq in corpus:
-            sequence = ListNode.from_list(seq)
-            sequences.append(sequence)
-
-        return sequences        
-    
-    def _index_pairs(self, sequences: list[ListNode]) -> dict[tuple[int, int], set[ListNode]]:
-        pair_positions: dict[tuple[int, int], set[ListNode]] = {}
-        for seq in sequences:
-                token = seq
-                while token and token.next:
-                    pair = (token.val, token.next.val)
-                    if pair not in pair_positions:
-                        pair_positions[pair] = set()
-                    pair_positions[pair].add(token)
-                    token = token.next  
-        return pair_positions      
-    
-    def _make_pair_freq_heap(
-        self,
-        pair_positions: dict[tuple[int, int], set[ListNode]],
-        vocab: dict[int, bytes]
-        ) -> list[tuple[int, tuple, tuple[int, int]]]:
-        pair_frequencies: list[tuple[int, tuple, tuple[int, int]]] = []
-        for pair, positions in pair_positions.items():
-            pair_frequencies.append((-len(positions), tuple(-b for b in vocab[pair[0]] + vocab[pair[1]]), pair))
-        heapq.heapify(pair_frequencies)
-        return pair_frequencies
-    
-    def _apply_merge(
-        self,
-        pair: tuple[int, int],
-        tokenid: int,
-        pair_positions: dict[tuple[int, int], set[ListNode]]
-        ) -> None:
-            ocurrences = list(pair_positions[pair])
-            for pos in ocurrences:
-                # We will merge pos and pos.next into a single node with value tokenid
-                # All it's neighbors are going to be affected by this merge and we need to 
-                # update pair_positions by first removing old references.
-                for neighbor in (pos.prev, pos.next):
-                    if neighbor and neighbor.next:
-                        old_pair = (neighbor.val, neighbor.next.val)
-                        if old_pair in pair_positions:
-                            pair_positions[old_pair].discard(neighbor)
-                # Merge nodes
-                old_node = pos.next
-                pos.val = tokenid
-                pos.next = old_node.next
-                if old_node.next:
-                    old_node.next.prev = pos
-
-                # Add new pairs formed by the merge
-                if pos.prev:
-                    new_pair = (pos.prev.val, pos.val)
-                    if new_pair not in pair_positions:
-                        pair_positions[new_pair] = set()
-                    pair_positions[new_pair].add(pos.prev)
-                if pos.next:
-                    new_pair = (pos.val, pos.next.val)
-                    if new_pair not in pair_positions:
-                        pair_positions[new_pair] = set()
-                    pair_positions[new_pair].add(pos)
-            # Remove merged pair from pair_positions
-            if pair in pair_positions:
-                del pair_positions[pair]
