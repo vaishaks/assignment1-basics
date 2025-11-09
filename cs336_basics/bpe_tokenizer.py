@@ -109,18 +109,7 @@ class BPETokenizer(Tokenizer):
                         pair_positions[pair] = set()
                     pair_positions[pair].add(token)
                     token = token.next  
-        return pair_positions      
-    
-    def _make_pair_freq_heap(
-        self,
-        pair_positions: dict[tuple[int, int], set[ListNode]],
-        vocab: dict[int, bytes]
-        ) -> list[tuple[int, tuple, tuple[int, int]]]:
-        pair_frequencies: list[tuple[int, tuple, tuple[int, int]]] = []
-        for pair, positions in pair_positions.items():
-            pair_frequencies.append((-len(positions), tuple(-b for b in vocab[pair[0]] + vocab[pair[1]]), pair))
-        heapq.heapify(pair_frequencies)
-        return pair_frequencies
+        return pair_positions
     
     def _apply_merge(
         self,
