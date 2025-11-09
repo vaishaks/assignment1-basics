@@ -219,36 +219,53 @@ class BPETokenizer(Tokenizer):
         return vocab, merges
     
     def encode(self, input_text: str) -> list[int]:
+        special_token_mapping = {}
+        for tid, token_bytes in self.vocab.items():
+            if token_bytes == self.merges[0][0]+self.merges[0][1]:
+                break
+            if tid >= 256:
+                special_token_mapping[token_bytes] = tid
         # Pretokenize input into strings according to PAT
-        pretok_text = re.findall(PAT, input_text)
+        pretok_text = []
+        for special_token in special_token_mapping.keys():
+            parts = input_text.split(special_token.decode("utf-8"))
+            for i, part in enumerate(parts):
+                # Apply regex pretokenization to the text part
+                for pretoken in re.finditer(PAT, part):
+                    pretok_text.append(pretoken.group(0))            
+            pretok_text.append(special_token.decode("utf-8"))            
         # Convert each pretoken string into a list of UTF-8 byte values (ints)
         input_text_bytes = [list(pretoken.encode("utf-8")) for pretoken in pretok_text]
         # Build a reverse mapping from byte sequence (bytes) to token id (int)
         byte_to_id = {b: tid for tid, b in self.vocab.items()}
+        # Build a reverse mapping from merges to their indices
+        merges_map = {}
+        for idx, merge_pair in enumerate(self.merges):
+            merges_map[(byte_to_id[merge_pair[0]], byte_to_id[merge_pair[1]])] = idx
         merged = []
         # Process each pretoken's byte-token sequence independently
         for tokens in input_text_bytes:
             # tokens is a list[int] representing initial single-byte token ids (0-255)
-            for idx, merge_pair in enumerate(self.merges):
-                # Each merge_pair is stored as (bytes_left, bytes_right).
-                left_bytes, right_bytes = merge_pair
-                # Use the reverse map to find the token ids.
-                left_id = byte_to_id.get(left_bytes)
-                right_id = byte_to_id.get(right_bytes)
-                new_token_id = 256 + idx
-                i = 0
-                merged_tokens: list[int] = []
-                while i < len(tokens):
-                    if i < len(tokens) - 1 and (tokens[i], tokens[i + 1]) == (left_id, right_id):
-                        merged_tokens.append(new_token_id)
-                        i += 2
-                    else:
-                        merged_tokens.append(tokens[i])
-                        i += 1              
-                if merged_tokens == tokens:
-                    break  # No more merges can be applied
-                tokens = merged_tokens
-            merged.extend(tokens)
+            # If it is a special token, directly map it
+            if bytes(tokens) in special_token_mapping:
+                merged.append(special_token_mapping[bytes(tokens)])
+                continue
+            sequence = ListNode.from_list(tokens)
+            pair_positions: dict[tuple[int, int], set[ListNode]] = self._index_pairs([sequence])
+            while sequence and sequence.next:
+                merge_indices = []
+                for pair in pair_positions.keys():
+                    if pair in merges_map:
+                        merge_indices.append(merges_map[pair])                    
+                if not merge_indices:
+                    # No more merges can be applied. We are done.
+                    break
+                # Get the merge pair with the smallest index
+                merge_pair = self.merges[min(merge_indices)]
+                tokenid = byte_to_id[merge_pair[0] + merge_pair[1]]
+                self._apply_merge((byte_to_id[merge_pair[0]], byte_to_id[merge_pair[1]]), tokenid, pair_positions)
+            merged.extend(sequence.to_list())
+
         return merged
 
     def decode(self, token_ids: list[int]) -> str:

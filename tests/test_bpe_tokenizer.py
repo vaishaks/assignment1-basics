@@ -19,4 +19,5 @@ def test_train():
     vocab, merges = tokenizer.train(pretokenized_data, 512, ["<|endoftext|>"])
     # print(vocab)
     # print(merges)
+    print(tokenizer.encode("Hello world!<|endoftext|>"))
     print(tokenizer.decode(tokenizer.encode("Hello world!<|endoftext|>")))
