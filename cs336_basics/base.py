@@ -23,23 +23,6 @@ class Tokenizer():
 
     def decode(self, token_ids: list[int]) -> str:
         raise NotImplementedError
-    
-def count_pairs(train_bytes: list[list[int]]) -> dict[tuple[int, int], int]:
-    """Count adjacent token-id pairs in the tokenized training data.
-
-    train_bytes is a list of token sequences where each token is represented
-    by its integer id. Returns a dict mapping (id1, id2) -> frequency.
-    """
-    pairs: list[tuple[int, int]] = []
-    for token_bytes in train_bytes:
-        for p1, p2 in zip(token_bytes[:-1], token_bytes[1:]):
-            pairs.append((p1, p2))
-
-    pair_counts: dict[tuple[int, int], int] = defaultdict(int)
-    for p in pairs:
-        pair_counts[p] += 1
-    return pair_counts
-
 
 def merge(train_bytes: list[list[int]], pair: tuple[int, int], newtoken: int) -> list[list[int]]:
     """Merge all occurrences of `pair` (two token ids) into a single newtoken id.
