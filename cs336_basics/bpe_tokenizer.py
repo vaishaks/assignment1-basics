@@ -112,9 +112,9 @@ class BPETokenizer(Tokenizer):
                 pair_positions[pair].add(token)
                 token = token.next
         # Build a max-heap of pairs by frequency
-        pair_frequencies: list[tuple[int, tuple[int, int]]] = []
+        pair_frequencies: list[tuple[int, int, tuple[int, int]]] = []
         for pair, positions in pair_positions.items():
-            pair_frequencies.append((-len(positions), pair))
+            pair_frequencies.append((-len(positions), tuple(-b for b in vocab[pair[0]] + vocab[pair[1]]), pair))
         heapq.heapify(pair_frequencies)
 
         # Determine how many merges to perform given the desired final vocab size
@@ -125,18 +125,18 @@ class BPETokenizer(Tokenizer):
             # Get most frequent pair
             if not pair_frequencies:
                 break
-            freq, pair = heapq.heappop(pair_frequencies)
+            freq, _, pair = heapq.heappop(pair_frequencies)
             freq = -freq
             if freq < 2:
                 break    
-            print(f"--- Iteration {idx}: Merging pair {pair} with frequency {freq} ---")
+            # print(f"--- Iteration {idx}: Merging pair {pair} with frequency {freq} ---")
             # Mint new token
-            tokenid = 256 + len(merges)
-            print(f"New token id: {tokenid}")
+            tokenid = len(vocab)
+            # print(f"New token id: {tokenid}")
             # Update vocab with the concatenation of the two merged bytes as a new token
             vocab[tokenid] = vocab[pair[0]] + vocab[pair[1]]
             # Save the merge
-            merges.append(pair)
+            merges.append((vocab[pair[0]], vocab[pair[1]]))
             # print(f"Merges so far: {merges}")
 
             ocurrences = list(pair_positions[pair])
@@ -174,7 +174,7 @@ class BPETokenizer(Tokenizer):
             pair_frequencies = []
             for pair, positions in pair_positions.items():
                 if positions:
-                    pair_frequencies.append((-len(positions), pair))
+                    pair_frequencies.append((-len(positions), tuple(-b for b in vocab[pair[0]] + vocab[pair[1]]), pair))
             heapq.heapify(pair_frequencies)
 
         self.vocab = vocab
