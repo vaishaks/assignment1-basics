@@ -5,7 +5,7 @@ import regex as re
 from multiprocessing import Pool
 from typing import BinaryIO
 
-from .base import Tokenizer, merge
+from .base import Tokenizer
 
 PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
 EOT_TOKEN = "<|endoftext|>"
@@ -140,11 +140,18 @@ class BPETokenizer(Tokenizer):
                 left_id = byte_to_id.get(left_bytes)
                 right_id = byte_to_id.get(right_bytes)
                 new_token_id = 256 + idx
-                # Apply merge on the single pretoken (wrap in list to match merge() API)
-                new_tokens = merge([tokens], (left_id, right_id), new_token_id)[0]
-                if new_tokens == tokens:
+                i = 0
+                merged_tokens: list[int] = []
+                while i < len(tokens):
+                    if i < len(tokens) - 1 and (tokens[i], tokens[i + 1]) == (left_id, right_id):
+                        merged_tokens.append(new_token_id)
+                        i += 2
+                    else:
+                        merged_tokens.append(tokens[i])
+                        i += 1              
+                if merged_tokens == tokens:
                     break  # No more merges can be applied
-                tokens = new_tokens
+                tokens = merged_tokens
             merged.extend(tokens)
         return merged
 
