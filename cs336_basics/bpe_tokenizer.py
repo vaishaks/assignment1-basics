@@ -170,34 +170,37 @@ class BPETokenizer(Tokenizer):
         vocab: dict[int, bytes] = self._init_vocab(special_tokens)
         merges: list[tuple[bytes, bytes]] = []
         sequences: list[ListNode] = self._build_sequences(train_data)
+
         # Pre-compute the positions of all adjacent pairs in the sequences
         pair_positions: dict[tuple[int, int], set[ListNode]] = self._index_pairs(sequences)
-        # Build a max-heap of pairs by frequency
-        pair_frequencies: list[tuple[int, tuple, tuple[int, int]]] = self._make_pair_freq_heap(pair_positions, vocab)
+
         # Determine how many merges to perform given the desired final vocab size
         num_merges = max(0, vocab_size - len(vocab))
         # Perform BPE merges.
         for idx in range(num_merges):
-            # Get most frequent pair
+            # Build frequency map
+            pair_frequencies: dict[tuple[int, int], int] = {pair: len(pos) for pair, pos in pair_positions.items() if len(pos) >= 2}
             if not pair_frequencies:
                 break
-            freq, _, pair = heapq.heappop(pair_frequencies)
-            freq = -freq
+            # Lexicographical ordering of the most frequent pair
+            def rank(pair: tuple[int, int]) -> tuple[int, tuple[bytes, bytes]]:
+                # Sort primarily by count, then by lexicographical order of bytes
+                return (pair_frequencies[pair], (vocab[pair[0]], vocab[pair[1]]))
+            # Find the most frequent (and lexicographically largest) pair
+            max_pair = max(pair_frequencies, key=rank)
+            freq = pair_frequencies[max_pair]
             if freq < 2:
-                break    
-            # print(f"--- Iteration {idx}: Merging pair {pair} with frequency {freq} ---")
+                break
+
             # Mint new token
             tokenid = len(vocab)
-            # print(f"New token id: {tokenid}")
             # Update vocab with the concatenation of the two merged bytes as a new token
-            vocab[tokenid] = vocab[pair[0]] + vocab[pair[1]]
+            vocab[tokenid] = vocab[max_pair[0]] + vocab[max_pair[1]]
             # Save the merge
-            merges.append((vocab[pair[0]], vocab[pair[1]]))
-            # print(f"Merges so far: {merges}")
-            # Merge all occurrences in the sequences
-            self._apply_merge(pair, tokenid, pair_positions)
-            # Recompute frequencies
-            pair_frequencies = self._make_pair_freq_heap(pair_positions, vocab)
+            merges.append((vocab[max_pair[0]], vocab[max_pair[1]]))
+
+            # Apply the merge and update pair positions
+            self._apply_merge(max_pair, tokenid, pair_positions)
 
         self.vocab = vocab
         self.merges = merges
