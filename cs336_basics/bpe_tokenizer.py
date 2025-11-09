@@ -1,4 +1,5 @@
 import os
+import heapq
 import regex as re 
 
 from multiprocessing import Pool
@@ -7,6 +8,39 @@ from typing import BinaryIO
 from .base import Tokenizer, count_pairs, merge
 
 PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
+
+class ListNode(object):
+    def __init__(self, x: int):
+        self.val = x
+        self.next = None
+        self.prev = None
+
+    @classmethod
+    def from_list(cls, list_of_ints: list[int]) -> 'ListNode':
+        if list_of_ints:
+            n = cls(list_of_ints[0])
+            next = ListNode.from_list(list_of_ints[1:])
+            n.next = next
+            if next:
+                next.prev = n
+            return n
+        
+    def print_list(self) -> None:
+        n = self
+        buffer = []
+        while n:
+            buffer.append(str(n.val))
+            n = n.next
+        s = "->".join(buffer)
+        print(s)
+
+    def to_list(self) -> list[int]:
+        n = self
+        buffer = []
+        while n:
+            buffer.append(n.val)
+            n = n.next
+        return buffer
 
 class BPETokenizer(Tokenizer):
     def __init__(self, vocab: dict[int, bytes], merges: list[tuple[bytes, bytes]]):
@@ -57,29 +91,91 @@ class BPETokenizer(Tokenizer):
             vocab[len(vocab)] = tok.encode("utf-8")
 
         # Preprocess the training data into a list of token ids (ints)
-        train_bytes: list[list[int]] = []
+        corpus: list[list[int]] = []
         for pretoken in train_data:
-            train_bytes.append(list(pretoken.encode("utf-8")))
+            corpus.append(list(pretoken.encode("utf-8")))
+
+        # Create linked list sequences for each pretoken
+        sequences: list[ListNode] = []
+        for seq in corpus:
+            sequence = ListNode.from_list(seq)
+            sequences.append(sequence)
+        
+        # Pre-compute the positions of all adjacent pairs in the sequences
+        pair_positions: dict[tuple[int, int], set[ListNode]] = {}
+        for seq in sequences:
+            token = seq
+            while token and token.next:
+                pair = (token.val, token.next.val)
+                if pair not in pair_positions:
+                    pair_positions[pair] = set()
+                pair_positions[pair].add(token)
+                token = token.next
+        # Build a max-heap of pairs by frequency
+        pair_frequencies: list[tuple[int, tuple[int, int]]] = []
+        for pair, positions in pair_positions.items():
+            pair_frequencies.append((-len(positions), pair))
+        heapq.heapify(pair_frequencies)
 
         # Determine how many merges to perform given the desired final vocab size
         num_merges = max(0, vocab_size - len(vocab))
 
-        # Perform BPE merges. Mint new ids from len(vocab) so ids are consistent
-        # with the current vocabulary size (and match how bpe.py behaves).
-        for _ in range(num_merges):
-            # Calculate the frequency of all adjacent pairs in the training data
-            pair_counts: dict[tuple[int, int], int] = count_pairs(train_bytes)
-            if not pair_counts:
-                break  # No more pairs to merge
-            max_pair: tuple[int, int] = max(pair_counts, key=pair_counts.get)
-            # Mint a new token id at the end of the current vocab
-            tokenid = len(vocab)
-            # Update vocab with the concatenation of the two merged bytes
-            vocab[tokenid] = vocab[max_pair[0]] + vocab[max_pair[1]]
-            # Update merges (store as tuple[bytes, bytes])
-            merges.append((vocab[max_pair[0]], vocab[max_pair[1]]))
-            # Merge all occurrences of the most frequent pair
-            train_bytes = merge(train_bytes, max_pair, tokenid)
+        # Perform BPE merges.
+        for idx in range(num_merges):
+            # Get most frequent pair
+            if not pair_frequencies:
+                break
+            freq, pair = heapq.heappop(pair_frequencies)
+            freq = -freq
+            if freq < 2:
+                break    
+            print(f"--- Iteration {idx}: Merging pair {pair} with frequency {freq} ---")
+            # Mint new token
+            tokenid = 256 + len(merges)
+            print(f"New token id: {tokenid}")
+            # Update vocab with the concatenation of the two merged bytes as a new token
+            vocab[tokenid] = vocab[pair[0]] + vocab[pair[1]]
+            # Save the merge
+            merges.append(pair)
+            # print(f"Merges so far: {merges}")
+
+            ocurrences = list(pair_positions[pair])
+            for pos in ocurrences:
+                # We will merge pos and pos.next into a single node with value tokenid
+                # All it's neighbors are going to be affected by this merge and we need to 
+                # update pair_positions by first removing old references.
+                for neighbor in (pos.prev, pos.next):
+                    if neighbor and neighbor.next:
+                        old_pair = (neighbor.val, neighbor.next.val)
+                        if old_pair in pair_positions:
+                            pair_positions[old_pair].discard(neighbor)
+                # Merge nodes
+                old_node = pos.next
+                pos.val = tokenid
+                pos.next = old_node.next
+                if old_node.next:
+                    old_node.next.prev = pos
+
+                # Add new pairs formed by the merge
+                if pos.prev:
+                    new_pair = (pos.prev.val, pos.val)
+                    if new_pair not in pair_positions:
+                        pair_positions[new_pair] = set()
+                    pair_positions[new_pair].add(pos.prev)
+                if pos.next:
+                    new_pair = (pos.val, pos.next.val)
+                    if new_pair not in pair_positions:
+                        pair_positions[new_pair] = set()
+                    pair_positions[new_pair].add(pos)
+            # Remove merged pair from pair_positions
+            if pair in pair_positions:
+                del pair_positions[pair]
+            # Recompute frequencies
+            pair_frequencies = []
+            for pair, positions in pair_positions.items():
+                if positions:
+                    pair_frequencies.append((-len(positions), pair))
+            heapq.heapify(pair_frequencies)
 
         self.vocab = vocab
         self.merges = merges
